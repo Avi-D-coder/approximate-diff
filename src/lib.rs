@@ -1,4 +1,5 @@
 use std::cmp::{max, min};
+use std::collections::HashMap;
 use std::hash::{BuildHasher, Hash, Hasher};
 
 extern crate itertools;
@@ -12,7 +13,7 @@ extern crate fasthash;
 use fasthash::murmur3::Murmur3Hasher_x86_32;
 
 extern crate smallvec;
-use smallvec::SmallVec;
+use smallvec::{smallvec, SmallVec};
 
 pub trait HashCache<T>
 where
@@ -37,8 +38,7 @@ type Index = usize;
 
 #[derive(Clone, Debug)]
 pub enum IndexToIndex {
-    CachedLeft(Index),
-    CachedRight(Index),
+    Cached(Index),
     Found(Index, Index),
 }
 
@@ -50,7 +50,8 @@ pub enum Position {
 
 impl Default for Position {
     fn default() -> Self {
-        Position::Zero
+        // old starts on the left
+        Position::First
     }
 }
 
@@ -77,6 +78,31 @@ where
     }
 }
 
+impl<'l, T> From<&'l [T]> for DefaultHashCache
+where
+    T: Hash,
+{
+    fn from(slice: &'l [T]) -> DefaultHashCache {
+        let cache = slice
+            .iter()
+            .enumerate()
+            .map(|(index, content)| {
+                let mut hasher = Murmur3Hasher_x86_32::default();
+                content.hash(&mut hasher);
+                let hash = hasher.finish() as u32;
+
+                (hash, smallvec![IndexToIndex::Cached(index)])
+            })
+            .collect();
+
+        DefaultHashCache {
+            status: Complete::Complete,
+            new_position: Position::default(),
+            cache,
+        }
+    }
+}
+
 pub trait Diffable<'l, I>
 where
     I: Hash,
@@ -87,7 +113,7 @@ where
     /// you should clone the cache before passing it in.
     fn hash_diff_cached<C>(self, old_cache: C, new: Self) -> (Diff<'l, I>, C)
     where
-        C: HashCache<I>;
+        C: HashCache<I> + From<&'l [I]>;
 }
 
 pub struct Diff<'l, I> {
