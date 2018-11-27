@@ -15,91 +15,111 @@ use fasthash::murmur3::Murmur3Hasher_x86_32;
 extern crate smallvec;
 use smallvec::{smallvec, SmallVec};
 
-pub trait HashCache<T>
+pub trait HashCache<'l, T>
 where
     T: Hash,
 {
-    fn hash_at(&mut self, index: usize, content: &T) -> IndexToIndex;
+    fn hash32(segment: &T) -> u32;
+    fn segment_change(&mut self, index: usize, segment: &'l T) -> Option<Change<'l, T>>;
+}
+
+// TODO implement `PartialOrd` interns of index
+#[derive(Clone, Debug, PartialEq)]
+pub struct IndexMap<'l, T> {
+    index: usize,
+    segment: &'l T,
 }
 
 #[derive(Clone, Debug)]
-enum Complete {
-    Complete,
-    Incomplete,
+pub enum IndexState<'l, T> {
+    /// Cached holds the old `IndexMap`
+    Cached(IndexMap<'l, T>),
+    /// `Found` holds the new `IndexMap`
+    Found(IndexMap<'l, T>),
 }
+use self::IndexState::*;
 
-impl Default for Complete {
-    fn default() -> Self {
-        Complete::Incomplete
-    }
-}
-
-type Index = usize;
+type Flag = bool;
 
 #[derive(Clone, Debug)]
-pub enum IndexToIndex {
-    Cached(Index),
-    Found(Index, Index),
+pub struct DefaultHashCache<'l, T> {
+    /// `(flag,  IndexMap<'l, T>) => Cached(IndexMap<'l, T>)` used to view `cache`
+    flag: Flag,
+    /// Map from hash to `IndexState` where `Flag` is interpreted with `flag`
+    cache: IntMap<u32, SmallVec<[(Flag, IndexMap<'l, T>); 2]>>,
 }
 
-#[derive(Clone, Debug)]
-pub enum Position {
-    Zero,
-    First,
-}
-
-impl Default for Position {
-    fn default() -> Self {
-        // old starts on the left
-        Position::First
-    }
-}
-
-#[derive(Clone, Default, Debug)]
-pub struct DefaultHashCache {
-    status: Complete,
-    new_position: Position,
-    /// Map from hash to indexes
-    cache: IntMap<u32, SmallVec<[IndexToIndex; 2]>>,
-}
-
-impl<T> HashCache<T> for DefaultHashCache
-where
-    T: Hash,
-{
-    fn hash_at(&mut self, index: usize, content: &T) -> IndexToIndex {
+impl<'l, T> DefaultHashCache<'l, T> {
+    fn view_state(flag: Flag, raw: &(Flag, IndexMap<'l, T>)) -> IndexState<'l, T> {
         unimplemented!()
-        // *self.cache.entry(index).or_insert_with(|| {
-        //     // FIXME this is ugly
-        //     let mut hasher = Murmur3Hasher_x86_32::default();
-        //     content.hash(&mut hasher);
-        //     hasher.finish() as u32
-        // })
+    }
+
+    fn set_state(flag: Flag, raw: &mut (Flag, IndexMap<'l, T>), to: IndexState<'l, T>) {
+        unimplemented!()
+    }
+
+    fn toggle(&mut self) {
+        self.flag = !self.flag
     }
 }
 
-impl<'l, T> From<&'l [T]> for DefaultHashCache
+impl<'l, T> HashCache<'l, T> for DefaultHashCache<'l, T>
 where
-    T: Hash,
+    T: Hash + PartialEq,
 {
-    fn from(slice: &'l [T]) -> DefaultHashCache {
+    fn hash32(segment: &T) -> u32 {
+        // TODO I think this allocates unnecessarily
+        // If so it needs to be fixed in th rust-fasthash crate
+        let mut hasher = Murmur3Hasher_x86_32::default();
+        segment.hash(&mut hasher);
+        hasher.finish() as u32
+    }
+
+    fn segment_change(&mut self, new_index: usize, new_segment: &'l T) -> Option<Change<'l, T>> {
+        let hash = DefaultHashCache::hash32(new_segment);
+        let Self { flag, cache } = self;
+        cache.entry(hash).and_modify(|index_map| {
+            // This is safe because we delete the entry if the `SmallVec` becomes empty.
+            // TODO this should be proven with an `AtLeastOne` constructor type
+            for i in index_map.iter_mut() {
+                if let Cached(IndexMap { index, segment }) = Self::view_state(*flag, i) {
+                    if segment == new_segment {
+                        Self::set_state(
+                            *flag,
+                            i,
+                            Found(IndexMap {
+                                index: new_index,
+                                segment: new_segment,
+                            }),
+                        );
+                    }
+                }
+            }
+        });
+        unimplemented!()
+    }
+}
+
+impl<'l, T> From<&'l [T]> for DefaultHashCache<'l, T>
+where
+    T: Hash + PartialEq,
+{
+    fn from(slice: &'l [T]) -> DefaultHashCache<'l, T> {
+        let flag = false;
         let cache = slice
             .iter()
             .enumerate()
-            .map(|(index, content)| {
-                let mut hasher = Murmur3Hasher_x86_32::default();
-                content.hash(&mut hasher);
-                let hash = hasher.finish() as u32;
-
-                (hash, smallvec![IndexToIndex::Cached(index)])
+            .map(|(index, segment)| {
+                (
+                    // key
+                    DefaultHashCache::hash32(segment),
+                    // value
+                    smallvec![(flag, IndexMap { index, segment })],
+                )
             })
             .collect();
 
-        DefaultHashCache {
-            status: Complete::Complete,
-            new_position: Position::default(),
-            cache,
-        }
+        DefaultHashCache { flag, cache }
     }
 }
 
@@ -109,11 +129,11 @@ where
 {
     fn hash_diff(self, new: Self) -> Diff<'l, I>;
     /// Utilizes Cache of old hashes to speedup diff. Returns Diff and the `HashCache` of new.
-    /// If you will be diffing more than 1 new slice against old,
+    /// If you will be differencing more than 1 new slice against old,
     /// you should clone the cache before passing it in.
     fn hash_diff_cached<C>(self, old_cache: C, new: Self) -> (Diff<'l, I>, C)
     where
-        C: HashCache<I> + From<&'l [I]>;
+        C: HashCache<'l, I> + From<&'l [I]>;
 }
 
 pub struct Diff<'l, I> {
@@ -131,12 +151,12 @@ where
     I: PartialEq + Hash,
 {
     fn hash_diff(self, new: Self) -> Diff<'l, I> {
-        self.hash_diff_cached(DefaultHashCache::default(), new).0
+        self.hash_diff_cached(DefaultHashCache::from(self), new).0
     }
 
     fn hash_diff_cached<C>(self, cache: C, new: Self) -> (Diff<'l, I>, C)
     where
-        C: HashCache<I>,
+        C: HashCache<'l, I>,
     {
         let old = self;
 
