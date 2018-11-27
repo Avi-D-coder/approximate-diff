@@ -11,30 +11,69 @@ use nohash_hasher::IntMap;
 extern crate fasthash;
 use fasthash::murmur3::Murmur3Hasher_x86_32;
 
+extern crate smallvec;
+use smallvec::SmallVec;
+
 pub trait HashCache<T>
 where
     T: Hash,
 {
-    /// Returns hash if index is already set, otherwise returns hashed content.
-    fn hash_at(&mut self, index: usize, content: &T) -> u32;
+    fn hash_at(&mut self, index: usize, content: &T) -> IndexToIndex;
+}
+
+#[derive(Clone, Debug)]
+enum Complete {
+    Complete,
+    Incomplete,
+}
+
+impl Default for Complete {
+    fn default() -> Self {
+        Complete::Incomplete
+    }
+}
+
+type Index = usize;
+
+#[derive(Clone, Debug)]
+pub enum IndexToIndex {
+    CachedLeft(Index),
+    CachedRight(Index),
+    Found(Index, Index),
+}
+
+#[derive(Clone, Debug)]
+pub enum Position {
+    Zero,
+    First,
+}
+
+impl Default for Position {
+    fn default() -> Self {
+        Position::Zero
+    }
 }
 
 #[derive(Clone, Default, Debug)]
 pub struct DefaultHashCache {
-    cache: IntMap<usize, u32>,
+    status: Complete,
+    new_position: Position,
+    /// Map from hash to indexes
+    cache: IntMap<u32, SmallVec<[IndexToIndex; 2]>>,
 }
 
 impl<T> HashCache<T> for DefaultHashCache
 where
     T: Hash,
 {
-    fn hash_at(&mut self, index: usize, content: &T) -> u32 {
-        *self.cache.entry(index).or_insert_with(|| {
-            // FIXME this is ugly
-            let mut hasher = Murmur3Hasher_x86_32::default();
-            content.hash(&mut hasher);
-            hasher.finish() as u32
-        })
+    fn hash_at(&mut self, index: usize, content: &T) -> IndexToIndex {
+        unimplemented!()
+        // *self.cache.entry(index).or_insert_with(|| {
+        //     // FIXME this is ugly
+        //     let mut hasher = Murmur3Hasher_x86_32::default();
+        //     content.hash(&mut hasher);
+        //     hasher.finish() as u32
+        // })
     }
 }
 

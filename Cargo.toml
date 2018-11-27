@@ -7,3 +7,4 @@ authors = ["Avi ד"]
 itertools = "0.7.9"
 nohash-hasher = "0.1.1"
 fasthash = "0.3.2"
+smallvec = "0.6.6"
