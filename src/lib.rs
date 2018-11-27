@@ -24,13 +24,13 @@ where
 }
 
 // TODO implement `PartialOrd` interns of index
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Copy, Clone, Debug, PartialEq)]
 pub struct IndexMap<'l, T> {
     index: usize,
     segment: &'l T,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Copy, Clone, Debug, PartialEq)]
 pub enum IndexState<'l, T> {
     /// Cached holds the old `IndexMap`
     Cached(IndexMap<'l, T>),
@@ -51,11 +51,33 @@ pub struct DefaultHashCache<'l, T> {
 
 impl<'l, T> DefaultHashCache<'l, T> {
     fn view_state(flag: Flag, raw: &(Flag, IndexMap<'l, T>)) -> IndexState<'l, T> {
-        unimplemented!()
+        let (raw_flag, IndexMap { index, segment }) = raw;
+        if flag == *raw_flag {
+            Cached(IndexMap {
+                index: *index,
+                segment: *segment,
+            })
+        } else {
+            Found(IndexMap {
+                index: *index,
+                segment: *segment,
+            })
+        }
     }
 
     fn set_state(flag: Flag, raw: &mut (Flag, IndexMap<'l, T>), to: IndexState<'l, T>) {
-        unimplemented!()
+        let (raw_flag, raw_index_map) = raw;
+
+        match to {
+            Cached(index_map) => {
+                *raw_flag = flag;
+                *raw_index_map = index_map;
+            }
+            Found(index_map) => {
+                *raw_flag = !flag;
+                *raw_index_map = index_map;
+            }
+        }
     }
 
     fn toggle(&mut self) {
