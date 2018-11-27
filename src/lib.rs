@@ -145,40 +145,40 @@ where
     }
 }
 
-pub trait Diffable<'l, I>
+pub trait Diffable<'l, T>
 where
-    I: Hash,
+    T: Hash,
 {
-    fn hash_diff(self, new: Self) -> Diff<'l, I>;
+    fn hash_diff(self, new: Self) -> Diff<'l, T>;
     /// Utilizes Cache of old hashes to speedup diff. Returns Diff and the `HashCache` of new.
     /// If you will be differencing more than 1 new slice against old,
     /// you should clone the cache before passing it in.
-    fn hash_diff_cached<C>(self, old_cache: C, new: Self) -> (Diff<'l, I>, C)
+    fn hash_diff_cached<C>(self, old_cache: C, new: Self) -> (Diff<'l, T>, C)
     where
-        C: HashCache<'l, I> + From<&'l [I]>;
+        C: HashCache<'l, T> + From<&'l [T]>;
 }
 
-pub struct Diff<'l, I> {
-    old: &'l [I],
-    new: &'l [I],
+pub struct Diff<'l, T> {
+    old: &'l [T],
+    new: &'l [T],
 }
 
-pub enum Change<'l, I> {
-    Added(&'l [I]),
-    Removed(&'l [I]),
+pub enum Change<'l, T> {
+    Added(&'l [T]),
+    Removed(&'l [T]),
 }
 
-impl<'l, I> Diffable<'l, I> for &'l [I]
+impl<'l, T> Diffable<'l, T> for &'l [T]
 where
-    I: PartialEq + Hash,
+    T: PartialEq + Hash,
 {
-    fn hash_diff(self, new: Self) -> Diff<'l, I> {
+    fn hash_diff(self, new: Self) -> Diff<'l, T> {
         self.hash_diff_cached(DefaultHashCache::from(self), new).0
     }
 
-    fn hash_diff_cached<C>(self, cache: C, new: Self) -> (Diff<'l, I>, C)
+    fn hash_diff_cached<C>(self, cache: C, new: Self) -> (Diff<'l, T>, C)
     where
-        C: HashCache<'l, I>,
+        C: HashCache<'l, T>,
     {
         let old = self;
 
@@ -212,9 +212,9 @@ where
     }
 }
 
-impl<'l, I> Iterator for Diff<'l, I> {
-    type Item = Change<'l, I>;
-    fn next(&mut self) -> Option<Change<'l, I>> {
+impl<'l, T> Iterator for Diff<'l, T> {
+    type Item = Change<'l, T>;
+    fn next(&mut self) -> Option<Change<'l, T>> {
         unimplemented!()
     }
 }
