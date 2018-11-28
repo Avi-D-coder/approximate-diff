@@ -41,7 +41,7 @@ use self::IndexState::*;
 
 type Flag = bool;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct DefaultHashCache<'l, T> {
     /// `(flag,  IndexMap<'l, T>) => Cached(IndexMap<'l, T>)` used to view `cache`
     flag: Flag,
@@ -159,20 +159,23 @@ pub trait Diffable<'l, T>
 where
     T: Hash,
 {
-    fn hash_diff(self, new: Self) -> Diff<'l, T>;
+    fn hash_diff(self, new: Self) -> Diff<'l, T, DefaultHashCache<'l, T>>;
     /// Utilizes Cache of old hashes to speedup diff. Returns Diff and the `HashCache` of new.
     /// If you will be differencing more than 1 new slice against old,
     /// you should clone the cache before passing it in.
-    fn hash_diff_cached<C>(self, old_cache: C, new: Self) -> (Diff<'l, T>, C)
+    fn hash_diff_cached<C>(self, old_cache: C, new: Self) -> Diff<'l, T, C>
     where
         C: HashCache<'l, T> + From<&'l [T]>;
 }
 
-pub struct Diff<'l, T> {
-    old: &'l [T],
-    new: &'l [T],
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub struct Diff<'l, T, C> {
+    future: Option<Change<'l, T>>,
+    changed_new: &'l [T],
+    cache: C,
 }
 
+#[derive(Copy, Clone, Debug, PartialEq)]
 pub enum Change<'l, S> {
     Added(&'l S),
     Removed(&'l S),
@@ -182,11 +185,12 @@ impl<'l, T> Diffable<'l, T> for &'l [T]
 where
     T: PartialEq + Hash,
 {
-    fn hash_diff(self, new: Self) -> Diff<'l, T> {
-        self.hash_diff_cached(DefaultHashCache::from(self), new).0
+    fn hash_diff(self, new: Self) -> Diff<'l, T, DefaultHashCache<'l, T>> {
+        // Properly implement so that a cache can not be extracted
+        self.hash_diff_cached(DefaultHashCache::from(self), new)
     }
 
-    fn hash_diff_cached<C>(self, cache: C, new: Self) -> (Diff<'l, T>, C)
+    fn hash_diff_cached<C>(self, cache: C, new: Self) -> Diff<'l, T, C>
     where
         C: HashCache<'l, T>,
     {
@@ -203,7 +207,11 @@ where
         if diff_start == longer {
             // Here zip proved both new and old have same length.
             // So there are no changes.
-            return unimplemented!();
+            return Diff {
+                future: None,
+                changed_new: &[],
+                cache,
+            };
         }
 
         let diff_end = old
@@ -216,16 +224,26 @@ where
             })
             .map_or(0, |(l, _)| l + 1);
 
-        let changed_old = &old[diff_start..min(old.len(), diff_end)];
         let changed_new = &new[diff_start..min(new.len(), diff_end)];
-        unimplemented!()
+        Diff {
+            future: None,
+            changed_new,
+            cache,
+        }
     }
 }
 
-impl<'l, T> Iterator for Diff<'l, T> {
-    type Item = Change<'l, T>;
-    fn next(&mut self) -> Option<Change<'l, T>> {
-        unimplemented!()
+impl<'l, T, C> Iterator for Diff<'l, T, C> {
+    type Item = Change<'l, &'l [T]>;
+    fn next(&mut self) -> Option<Change<'l, &'l [T]>> {
+        match (self.changed_new, &self.future) {
+            ([_], None) => {
+                self.changed_new.iter();
+                unimplemented!()
+            }
+            ([], Some(future_item)) => unimplemented!(),
+            _ => None,
+        }
     }
 }
 
