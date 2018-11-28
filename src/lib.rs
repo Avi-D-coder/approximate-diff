@@ -100,25 +100,35 @@ where
     fn segment_change(&mut self, new_index: usize, new_segment: &'l T) -> Option<Change<'l, T>> {
         let hash = DefaultHashCache::hash32(new_segment);
         let Self { flag, cache } = self;
+        let mut change = None;
         cache.entry(hash).and_modify(|index_map| {
             // This is safe because we delete the entry if the `SmallVec` becomes empty.
             // TODO this should be proven with an `AtLeastOne` constructor type
-            for i in index_map.iter_mut() {
-                if let Cached(IndexMap { index, segment }) = Self::view_state(*flag, i) {
-                    if segment == new_segment {
-                        Self::set_state(
-                            *flag,
-                            i,
-                            Found(IndexMap {
-                                index: new_index,
-                                segment: new_segment,
-                            }),
-                        );
+            let no_change = index_map
+                .iter_mut()
+                .map(|i| {
+                    if let Cached(IndexMap { index, segment }) = Self::view_state(*flag, i) {
+                        if segment == new_segment {
+                            Self::set_state(
+                                *flag,
+                                i,
+                                Found(IndexMap {
+                                    index: new_index,
+                                    segment: new_segment,
+                                }),
+                            );
+                            true
+                        } else {
+                            false
+                        }
+                    } else {
+                        false
                     }
-                }
-            }
+                })
+                .find(|b| *b);
+            change = Some(Change::Added(new_segment));
         });
-        unimplemented!()
+        change
     }
 }
 
@@ -163,9 +173,9 @@ pub struct Diff<'l, T> {
     new: &'l [T],
 }
 
-pub enum Change<'l, T> {
-    Added(&'l [T]),
-    Removed(&'l [T]),
+pub enum Change<'l, S> {
+    Added(&'l S),
+    Removed(&'l S),
 }
 
 impl<'l, T> Diffable<'l, T> for &'l [T]
