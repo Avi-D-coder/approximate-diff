@@ -20,7 +20,7 @@ where
     T: Hash,
 {
     fn hash32(segment: &T) -> u32;
-    fn segment_change(&mut self, index: usize, segment: &'l T) -> Option<Change<'l, T>>;
+    fn segment_change(&mut self, index: usize, segment: &'l T) -> Option<Change<&'l T>>;
 }
 
 // TODO implement `PartialOrd` interns of index
@@ -97,7 +97,7 @@ where
         hasher.finish() as u32
     }
 
-    fn segment_change(&mut self, new_index: usize, new_segment: &'l T) -> Option<Change<'l, T>> {
+    fn segment_change(&mut self, new_index: usize, new_segment: &'l T) -> Option<Change<&'l T>> {
         let hash = DefaultHashCache::hash32(new_segment);
         let Self { flag, cache } = self;
         let mut change = None;
@@ -260,15 +260,52 @@ where
     }
 }
 
-impl<'l, T, C> Iterator for Diff<'l, T, C> {
-    type Item = Change<'l, &'l [T]>;
-    fn next(&mut self) -> Option<Change<'l, &'l [T]>> {
-        match (self.changed_new, &self.future) {
-            ([_], None) => {
-                self.changed_new.iter();
+impl<'l, T, C> Iterator for Diff<'l, T, C>
+where
+    C: HashCache<'l, T>,
+    T: Hash,
+{
+    type Item = Change<&'l [T]>;
+    fn next(&mut self) -> Option<Change<&'l [T]>> {
+        let Diff {
+            changed_new,
+            future,
+            cache,
+        } = self;
+
+        match (changed_new.is_empty(), future) {
+            (false, None) => {
+                changed_new.iter().enumerate().scan(
+                    None,
+                    |next_change: &mut Option<Change<&'l [T]>>, (index, segment)| {
+                        let keep_going =
+                            cache.segment_change(index, segment).map(|future_change| {
+                                let future_variant = ChangeVariant::from(future_change);
+                                let next_variant = next_change
+                                    .map(|nc| ChangeVariant::from(nc))
+                                    .unwrap_or(future_variant);
+
+                                if next_variant == future_variant {
+                                    let change =
+                                        Change::from((next_variant, &changed_new[0..index]));
+                                    *next_change = Some(change);
+                                    (Some(change), None)
+                                } else {
+                                    (next_change.clone(), Some(future_change.clone()))
+                                }
+                            });
+
+                        if keep_going.is_none() && next_change.is_none() {
+                            Some((None, None))
+                        } else {
+                            keep_going
+                        }
+                    },
+                );
+
                 unimplemented!()
             }
-            ([], Some(future_item)) => unimplemented!(),
+            (true, Some(future_item)) => unimplemented!(),
             _ => None,
         }
     }
