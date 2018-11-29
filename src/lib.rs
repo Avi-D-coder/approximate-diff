@@ -170,15 +170,42 @@ where
 
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct Diff<'l, T, C> {
-    future: Option<Change<'l, T>>,
+    future: Option<Change<&'l T>>,
     changed_new: &'l [T],
     cache: C,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq)]
-pub enum Change<'l, S> {
-    Added(&'l S),
-    Removed(&'l S),
+pub enum Change<S> {
+    Added(S),
+    Removed(S),
+}
+
+/// ChangeVariant is used for a `PartialEq` of variants.
+/// Such that `==` does not care about the contents of the change.
+#[derive(Copy, Clone, Debug, PartialEq)]
+enum ChangeVariant {
+    Added,
+    Removed,
+    // FIXME handle moved lines
+}
+
+impl<S> From<Change<S>> for ChangeVariant {
+    fn from(change: Change<S>) -> ChangeVariant {
+        match change {
+            Change::Added(_) => ChangeVariant::Added,
+            Change::Removed(_) => ChangeVariant::Removed,
+        }
+    }
+}
+
+impl<S> From<(ChangeVariant, S)> for Change<S> {
+    fn from(from: (ChangeVariant, S)) -> Change<S> {
+        match from {
+            (ChangeVariant::Removed, segment) => Change::Removed(segment),
+            (ChangeVariant::Added, segment) => Change::Added(segment),
+        }
+    }
 }
 
 impl<'l, T> Diffable<'l, T> for &'l [T]
