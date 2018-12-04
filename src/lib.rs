@@ -20,7 +20,7 @@ where
     T: Hash,
 {
     fn hash32(segment: &T) -> u32;
-    fn segment_change(&mut self, index: usize, segment: &'l T) -> Option<Change<&'l T>>;
+    fn segment_change(&mut self, index: usize, tail: &'l [T]) -> Option<Change<&'l T>>;
 }
 
 // TODO implement `PartialOrd` interns of index
@@ -97,7 +97,9 @@ where
         hasher.finish() as u32
     }
 
-    fn segment_change(&mut self, new_index: usize, new_segment: &'l T) -> Option<Change<&'l T>> {
+    fn segment_change(&mut self, new_index: usize, new_tail: &'l [T]) -> Option<Change<&'l T>> {
+        // caller must ensure new_tail holds at least one
+        let new_segment = &new_tail[0];
         let hash = DefaultHashCache::hash32(new_segment);
         let Self { flag, cache } = self;
         let mut change = None;
@@ -108,18 +110,24 @@ where
                 .iter_mut()
                 .map(|i| {
                     if let Cached(IndexMap { index, segment }) = Self::view_state(*flag, i) {
-                        if segment == new_segment {
-                            Self::set_state(
-                                *flag,
-                                i,
-                                Found(IndexMap {
-                                    index: new_index,
-                                    segment: new_segment,
-                                }),
-                            );
-                            true
-                        } else {
-                            false
+                        match (segment == new_segment, index == new_index) {
+                            (true, true) => {
+                                // No Change
+                                Self::set_state(
+                                    *flag,
+                                    i,
+                                    Found(IndexMap {
+                                        index: new_index,
+                                        segment: new_segment,
+                                    }),
+                                );
+                                true
+                            }
+                            (false, true) => {
+                                // We have either a deletion, or an addition
+                                unimplemented!()
+                            }
+                            (..) => false,
                         }
                     } else {
                         false
@@ -277,9 +285,10 @@ where
             (false, None) => {
                 changed_new.iter().enumerate().scan(
                     None,
-                    |next_change: &mut Option<Change<&'l [T]>>, (index, segment)| {
-                        let keep_going =
-                            cache.segment_change(index, segment).map(|future_change| {
+                    // FIXME this is a for loop
+                    |next_change: &mut Option<Change<&'l [T]>>, (index, _)| {
+                        let keep_going = cache.segment_change(index, &changed_new[index..]).map(
+                            |future_change| {
                                 let future_variant = ChangeVariant::from(future_change);
                                 let next_variant = next_change
                                     .map(|nc| ChangeVariant::from(nc))
@@ -293,7 +302,8 @@ where
                                 } else {
                                     (next_change.clone(), Some(future_change.clone()))
                                 }
-                            });
+                            },
+                        );
 
                         if keep_going.is_none() && next_change.is_none() {
                             Some((None, None))
