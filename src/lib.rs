@@ -123,8 +123,16 @@ where
                                 );
                                 true
                             }
-                            (false, true) => {
+                            (true, false) => {
                                 // We have either a deletion, or an addition
+
+                                // index >= new_index
+                                // due to deleted old entries being removed from map
+                                // FIXME remove deleted entries
+                                let deletion_len = index - new_index;
+
+                                // For Change to be a deletion:
+                                // tail[N <- 0..deletion_len].index == old[index+N].index
                                 unimplemented!()
                             }
                             (..) => false,
