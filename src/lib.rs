@@ -39,6 +39,25 @@ pub enum IndexState<'l, T> {
 }
 use self::IndexState::*;
 
+impl<'l, T> IndexState<'l, T> {
+    fn is_cached(&self) -> bool {
+        match self {
+            Cached(_) => true,
+            _ => false,
+        }
+    }
+
+    fn cached(&self) -> Option<IndexMap<'l, T>> {
+        match self {
+            Cached(IndexMap { index, segment }) => Some(IndexMap {
+                index: *index,
+                segment,
+            }),
+            _ => None,
+        }
+    }
+}
+
 type Flag = bool;
 
 #[derive(Clone, Debug, PartialEq)]
@@ -109,6 +128,26 @@ where
         cache.entry(hash).and_modify(|index_map| {
             // This is safe because we delete the entry if the `SmallVec` becomes empty.
             // TODO this should be proven with an `AtLeastOne` constructor type
+
+            {
+                let cached_im = index_map
+                    .iter()
+                    .map(|relation| DefaultHashCache::view_state(*flag, relation))
+                    .filter(|state| state.is_cached())
+                    .map(|cached| cached.cached().unwrap());
+
+                let no_change = cached_im
+                    .filter(|IndexMap { index, segment }| {
+                        *index == new_index && **segment == new_tail[0]
+                    })
+                    .next()
+                    .is_some();
+
+                if no_change {
+                    // return true
+                    unimplemented!()
+                }
+            }
             let no_change = index_map
                 .iter_mut()
                 // FIXME this map logic is wrong
@@ -116,7 +155,8 @@ where
                 // if that fails check for equal segments
                 .map(|i| {
                     if let Cached(IndexMap { index, segment }) = Self::view_state(*flag, i) {
-                        // TODO segment comparison is far more expensive so this should be a nested if statement.
+                        // TODO Segment comparison is far more expensive,
+                        // so this should be a nested if statement since match is eager.
                         match (segment == new_segment, index == new_index) {
                             (true, true) => {
                                 // No Change
