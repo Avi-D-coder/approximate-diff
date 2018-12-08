@@ -125,12 +125,15 @@ where
         let unsafe_cache =
             unsafe { &*{ cache as *const IntMap<u32, SmallVec<[(Flag, IndexMap<'l, T>); 2]>> } };
 
-        cache.entry(hash).and_modify(|index_map| {
+        cache.entry(hash).and_modify(|index_maps| {
+            // index_map is contains refs to any Index content pairs with a equal hash
+            // We handle hash collisions by checking segment content
+
             // This is safe because we delete the entry if the `SmallVec` becomes empty.
             // TODO this should be proven with an `AtLeastOne` constructor type
 
             {
-                let cached_im = index_map
+                let cached_im = index_maps
                     .iter()
                     .map(|relation| DefaultHashCache::view_state(*flag, relation))
                     .filter(|state| state.is_cached())
@@ -148,7 +151,59 @@ where
                     unimplemented!()
                 }
             }
-            let no_change = index_map
+
+            {
+                // FIXME This duplicate should be a higher order function.
+                // Blocked on type system
+                let cached_im = index_maps
+                    .iter_mut()
+                    .map(|relation| DefaultHashCache::view_state(*flag, relation))
+                    .filter(|state| state.is_cached())
+                    .map(|cached| cached.cached().unwrap());
+
+                let eq_segment = cached_im
+                    .filter(|IndexMap { segment, .. }| **segment == new_tail[0])
+                    .next();
+
+                if let Some(IndexMap { index, segment }) = eq_segment {
+                    // We have either a deletion, or an addition.
+
+                    // index >= new_index
+                    // due to deleted old entries being removed from map
+                    // FIXME remove deleted entries
+                    let deletion_len = index - new_index;
+                    let expect_index = index;
+
+                    // For Change to be a deletion:
+                    // tail[N <- 0..deletion_len].index == old[index+N].index
+
+                    let is_deletion = new_tail
+                        .iter()
+                        .skip(1)
+                        .map(|new_segment| {
+                            unsafe_cache
+                                .get(&DefaultHashCache::hash32(new_segment))
+                                .map_or(false, |index_map| {
+                                    index_map
+                                        .iter()
+                                        .map(|i| {
+                                            if let Cached(IndexMap { index, segment }) =
+                                                Self::view_state(*flag, i)
+                                            {
+                                                index == expect_index && segment == new_segment
+                                            } else {
+                                                false
+                                            }
+                                        })
+                                        .any(|b| b)
+                                })
+                        })
+                        .enumerate()
+                        .take_while(|(i, _)| *i != deletion_len)
+                        .all(|(_, b)| b);
+                }
+            }
+            let no_change = index_maps
                 .iter_mut()
                 // FIXME this map logic is wrong
                 // find equal index then check for equal segments
@@ -170,46 +225,7 @@ where
                                 );
                                 true
                             }
-                            (true, false) => {
-                                // We have either a deletion, or an addition
-
-                                // index >= new_index
-                                // due to deleted old entries being removed from map
-                                // FIXME remove deleted entries
-                                let deletion_len = index - new_index;
-                                let expect_index = index;
-
-                                // For Change to be a deletion:
-                                // tail[N <- 0..deletion_len].index == old[index+N].index
-
-                                let is_deletion = new_tail
-                                    .iter()
-                                    .skip(1)
-                                    .map(|new_segment| {
-                                        unsafe_cache
-                                            .get(&DefaultHashCache::hash32(new_segment))
-                                            .map_or(false, |index_map| {
-                                                index_map
-                                                    .iter()
-                                                    .map(|i| {
-                                                        if let Cached(IndexMap { index, segment }) =
-                                                            Self::view_state(*flag, i)
-                                                        {
-                                                            index == expect_index
-                                                                && segment == new_segment
-                                                        } else {
-                                                            false
-                                                        }
-                                                    })
-                                                    .any(|b| b)
-                                            })
-                                    })
-                                    .enumerate()
-                                    .take_while(|(i, _)| *i != deletion_len)
-                                    .all(|(_, b)| b);
-
-                                unimplemented!()
-                            }
+                            (true, false) => unimplemented!(),
                             (..) => false,
                         }
                     } else {
