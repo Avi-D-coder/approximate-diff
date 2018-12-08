@@ -30,34 +30,6 @@ pub struct IndexMap<'l, T> {
     segment: &'l T,
 }
 
-#[derive(Copy, Clone, Debug, PartialEq)]
-pub enum IndexState<'l, T> {
-    /// Cached holds the old `IndexMap`
-    Cached(IndexMap<'l, T>),
-    /// `Found` holds the new `IndexMap`
-    Found(IndexMap<'l, T>),
-}
-use self::IndexState::*;
-
-impl<'l, T> IndexState<'l, T> {
-    fn is_cached(&self) -> bool {
-        match self {
-            Cached(_) => true,
-            _ => false,
-        }
-    }
-
-    fn cached(&self) -> Option<IndexMap<'l, T>> {
-        match self {
-            Cached(IndexMap { index, segment }) => Some(IndexMap {
-                index: *index,
-                segment,
-            }),
-            _ => None,
-        }
-    }
-}
-
 type Flag = bool;
 
 #[derive(Clone, Debug, PartialEq)]
@@ -65,43 +37,7 @@ pub struct DefaultHashCache<'l, T> {
     /// `(flag,  IndexMap<'l, T>) => Cached(IndexMap<'l, T>)` used to view `cache`
     flag: Flag,
     /// Map from hash to `IndexState` where `Flag` is interpreted with `flag`
-    cache: IntMap<u32, SmallVec<[(Flag, IndexMap<'l, T>); 2]>>,
-}
-
-impl<'l, T> DefaultHashCache<'l, T> {
-    fn view_state(flag: Flag, raw: &(Flag, IndexMap<'l, T>)) -> IndexState<'l, T> {
-        let (raw_flag, IndexMap { index, segment }) = raw;
-        if flag == *raw_flag {
-            Cached(IndexMap {
-                index: *index,
-                segment: *segment,
-            })
-        } else {
-            Found(IndexMap {
-                index: *index,
-                segment: *segment,
-            })
-        }
-    }
-
-    fn set_state(flag: Flag, raw: &mut (Flag, IndexMap<'l, T>), to: IndexState<'l, T>) {
-        let (raw_flag, raw_index_map) = raw;
-
-        match to {
-            Cached(index_map) => {
-                *raw_flag = flag;
-                *raw_index_map = index_map;
-            }
-            Found(index_map) => {
-                *raw_flag = !flag;
-                *raw_index_map = index_map;
-            }
-        }
-    }
-
-    fn toggle(&mut self) {
-        self.flag = !self.flag
-    }
+    cache: IntMap<u32, SmallVec<[IndexMap<'l, T>; 2]>>,
 }
 
 impl<'l, T> HashCache<'l, T> for DefaultHashCache<'l, T>
@@ -122,7 +58,7 @@ where
         let hash = DefaultHashCache::hash32(new_segment);
         let Self { flag, cache } = self;
         let unsafe_cache =
-            unsafe { &*{ cache as *const IntMap<u32, SmallVec<[(Flag, IndexMap<'l, T>); 2]>> } };
+            unsafe { &*{ cache as *const IntMap<u32, SmallVec<[IndexMap<'l, T>; 2]>> } };
 
         cache.entry(hash).and_modify(|index_maps| {
             // index_map is contains refs to any Index content pairs with a equal hash
@@ -134,9 +70,7 @@ where
             {
                 let cached_im = index_maps
                     .iter()
-                    .map(|relation| DefaultHashCache::view_state(*flag, relation))
-                    .filter(|state| state.is_cached())
-                    .map(|cached| cached.cached().unwrap());
+                    .filter(|IndexMap { index, .. }| *index >= new_index);
 
                 let no_change = cached_im
                     .filter(|IndexMap { index, segment }| {
@@ -156,9 +90,7 @@ where
                 // Blocked on type system
                 let cached_im = index_maps
                     .iter_mut()
-                    .map(|relation| DefaultHashCache::view_state(*flag, relation))
-                    .filter(|state| state.is_cached())
-                    .map(|cached| cached.cached().unwrap());
+                    .filter(|IndexMap { index, .. }| *index >= new_index);
 
                 let eq_segment = cached_im
                     .filter(|IndexMap { segment, .. }| **segment == new_tail[0])
@@ -170,7 +102,7 @@ where
                     // index >= new_index
                     // due to deleted old entries being removed from map
                     // FIXME remove deleted entries
-                    let deletion_len = index - new_index;
+                    let deletion_len = *index - new_index;
                     let expect_index = index;
 
                     // For Change to be a deletion:
@@ -185,14 +117,12 @@ where
                                 .map_or(false, |index_map| {
                                     index_map
                                         .iter()
-                                        .map(|i| {
-                                            if let Cached(IndexMap { index, segment }) =
-                                                Self::view_state(*flag, i)
-                                            {
-                                                index == expect_index && segment == new_segment
-                                            } else {
-                                                false
-                                            }
+                                        // Our diff algorithm never backtracks,
+                                        // so >= states unfound segment.
+                                        .filter(|IndexMap { index, .. }| *index >= new_index)
+                                        .map(|IndexMap { index, segment }| {
+                                            // TODO We should check for expected for an addition
+                                            index == expect_index && *segment == new_segment
                                         })
                                         .any(|b| b)
                                 })
@@ -221,7 +151,7 @@ where
                     // key
                     DefaultHashCache::hash32(segment),
                     // value
-                    smallvec![(flag, IndexMap { index, segment })],
+                    smallvec![IndexMap { index, segment }],
                 )
             })
             .collect();
