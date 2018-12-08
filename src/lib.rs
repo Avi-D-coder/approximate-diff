@@ -121,7 +121,6 @@ where
         let new_segment = &new_tail[0];
         let hash = DefaultHashCache::hash32(new_segment);
         let Self { flag, cache } = self;
-        let mut change = None;
         let unsafe_cache =
             unsafe { &*{ cache as *const IntMap<u32, SmallVec<[(Flag, IndexMap<'l, T>); 2]>> } };
 
@@ -203,39 +202,8 @@ where
                         .all(|(_, b)| b);
                 }
             }
-            let no_change = index_maps
-                .iter_mut()
-                // FIXME this map logic is wrong
-                // find equal index then check for equal segments
-                // if that fails check for equal segments
-                .map(|i| {
-                    if let Cached(IndexMap { index, segment }) = Self::view_state(*flag, i) {
-                        // TODO Segment comparison is far more expensive,
-                        // so this should be a nested if statement since match is eager.
-                        match (segment == new_segment, index == new_index) {
-                            (true, true) => {
-                                // No Change
-                                Self::set_state(
-                                    *flag,
-                                    i,
-                                    Found(IndexMap {
-                                        index: new_index,
-                                        segment: new_segment,
-                                    }),
-                                );
-                                true
-                            }
-                            (true, false) => unimplemented!(),
-                            (..) => false,
-                        }
-                    } else {
-                        false
-                    }
-                })
-                .find(|b| *b);
-            change = Some(Change::Added(new_segment));
         });
-        change
+        unimplemented!()
     }
 }
 
