@@ -103,33 +103,65 @@ where
                     // due to deleted old entries being removed from map
                     // FIXME remove deleted entries
                     let deletion_len = *index - new_index;
-                    let expect_index = index;
+                    let deletion_expect_index = index;
 
                     // For Change to be a deletion:
                     // tail[N <- 0..deletion_len].index == old[index+N].index
 
-                    let is_deletion = new_tail
-                        .iter()
-                        .skip(1)
-                        .map(|new_segment| {
-                            unsafe_cache
-                                .get(&DefaultHashCache::hash32(new_segment))
-                                .map_or(false, |index_map| {
-                                    index_map
+                    let is_deletion =
+                        new_tail
+                            .iter()
+                            .skip(1)
+                            .enumerate()
+                            .scan(deletion_len, |deletion_len, (n, new_segment)| {
+                                unsafe_cache
+                                    .get(&DefaultHashCache::hash32(new_segment))
+                                    .map_or(Some((*deletion_len, false)), |index_map| {
+                                        // is consistent with being a
+                                        let (addition, deletion) = index_map
                                         .iter()
                                         // Our diff algorithm never backtracks,
                                         // so >= states unfound segment.
                                         .filter(|IndexMap { index, .. }| *index >= new_index)
-                                        .map(|IndexMap { index, segment }| {
-                                            // TODO We should check for expected for an addition
-                                            index == expect_index && *segment == new_segment
-                                        })
-                                        .any(|b| b)
-                                })
-                        })
-                        .enumerate()
-                        .take_while(|(i, _)| *i != deletion_len)
-                        .all(|(_, b)| b);
+                                        .scan(
+                                            (false, false),
+                                            |(addition, deletion), IndexMap { index, segment }| {
+                                                // TODO check asm to make sure LLVM makes this lazy
+                                                let eq_seg = *segment == new_segment;
+
+                                                if *index == new_index + n && eq_seg {
+                                                    // TODO cache additions
+                                                    // This would be a no change
+
+                                                    *addition = true;
+                                                    Some((*addition, *deletion))
+                                                } else if *index == *deletion_expect_index + n
+                                                    && eq_seg
+                                                {
+                                                    *deletion = true;
+                                                    Some((*addition, *deletion))
+                                                } else {
+                                                    Some((*addition, *deletion))
+                                                }
+                                            },
+                                        ).take_while(|t| *t != (true, true) ).last()
+                                        // This is safe due to the requirement that
+                                        // for each entry hash -> SmallVec.len >= 1
+                                        .unwrap();
+
+                                        if !deletion {
+                                            Some((*deletion_len, false))
+                                        } else if !addition {
+                                            *deletion_len -= 2;
+                                            Some((*deletion_len, true))
+                                        } else {
+                                            *deletion_len -= 1;
+                                            Some((*deletion_len, true))
+                                        }
+                                    })
+                            })
+                            .take_while(|(deletion_len, _)| *deletion_len != 0)
+                            .all(|(_, b)| b);
                 }
             }
         });
