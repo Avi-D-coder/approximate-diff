@@ -15,14 +15,6 @@ use fasthash::murmur3::Murmur3Hasher_x86_32;
 extern crate smallvec;
 use smallvec::{smallvec, SmallVec};
 
-pub trait HashCache<'l, T>
-where
-    T: Hash,
-{
-    fn hash32(segment: &T) -> u32;
-    fn segment_change(&mut self, index: usize, tail: &'l [T]) -> Option<Change<&'l T>>;
-}
-
 // TODO implement `PartialOrd` interns of index
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct IndexMap<'l, T> {
@@ -33,14 +25,14 @@ pub struct IndexMap<'l, T> {
 type Flag = bool;
 
 #[derive(Clone, Debug, PartialEq)]
-pub struct DefaultHashCache<'l, T> {
+pub struct HashCache<'l, T> {
     /// `(flag,  IndexMap<'l, T>) => Cached(IndexMap<'l, T>)` used to view `cache`
     flag: Flag,
     /// Map from hash to `IndexState` where `Flag` is interpreted with `flag`
     cache: IntMap<u32, SmallVec<[IndexMap<'l, T>; 2]>>,
 }
 
-impl<'l, T> HashCache<'l, T> for DefaultHashCache<'l, T>
+impl<'l, T> HashCache<'l, T>
 where
     T: Hash + PartialEq,
 {
@@ -52,10 +44,10 @@ where
         hasher.finish() as u32
     }
 
-    fn segment_change(&mut self, new_index: usize, new_tail: &'l [T]) -> Option<Change<&'l T>> {
+    fn segment_change(&mut self, new_index: usize, new_tail: &'l [T]) -> Option<Change<&'l [T]>> {
         // caller must ensure new_tail holds at least one
         let new_segment = &new_tail[0];
-        let hash = DefaultHashCache::hash32(new_segment);
+        let hash = HashCache::hash32(new_segment);
         let Self { flag, cache } = self;
         let unsafe_cache =
             unsafe { &*{ cache as *const IntMap<u32, SmallVec<[IndexMap<'l, T>; 2]>> } };
@@ -115,9 +107,9 @@ where
                             .skip(1)
                             .enumerate()
                             .scan(deletion_len, |deletion_len, (n, new_segment)| {
-                                unsafe_cache
-                                    .get(&DefaultHashCache::hash32(new_segment))
-                                    .map_or(Some((*deletion_len, false)), |index_map| {
+                                unsafe_cache.get(&HashCache::hash32(new_segment)).map_or(
+                                    Some((*deletion_len, false)),
+                                    |index_map| {
                                         // is consistent with being a
                                         let (addition, deletion) = index_map
                                         .iter()
@@ -180,11 +172,11 @@ where
     }
 }
 
-impl<'l, T> From<&'l [T]> for DefaultHashCache<'l, T>
+impl<'l, T> From<&'l [T]> for HashCache<'l, T>
 where
     T: Hash + PartialEq,
 {
-    fn from(slice: &'l [T]) -> DefaultHashCache<'l, T> {
+    fn from(slice: &'l [T]) -> HashCache<'l, T> {
         let flag = false;
         let cache = slice
             .iter()
@@ -192,14 +184,14 @@ where
             .map(|(index, segment)| {
                 (
                     // key
-                    DefaultHashCache::hash32(segment),
+                    HashCache::hash32(segment),
                     // value
                     smallvec![IndexMap { index, segment }],
                 )
             })
             .collect();
 
-        DefaultHashCache { flag, cache }
+        HashCache { flag, cache }
     }
 }
 
@@ -207,20 +199,18 @@ pub trait Diffable<'l, T>
 where
     T: Hash,
 {
-    fn hash_diff(self, new: Self) -> Diff<'l, T, DefaultHashCache<'l, T>>;
+    fn hash_diff(self, new: Self) -> Diff<'l, T>;
     /// Utilizes Cache of old hashes to speedup diff. Returns Diff and the `HashCache` of new.
     /// If you will be differencing more than 1 new slice against old,
     /// you should clone the cache before passing it in.
-    fn hash_diff_cached<C>(self, old_cache: C, new: Self) -> Diff<'l, T, C>
-    where
-        C: HashCache<'l, T> + From<&'l [T]>;
+    fn hash_diff_cached(self, old_cache: HashCache<'l, T>, new: Self) -> Diff<'l, T>;
 }
 
-#[derive(Copy, Clone, Debug, PartialEq)]
-pub struct Diff<'l, T, C> {
+#[derive(Clone, Debug, PartialEq)]
+pub struct Diff<'l, T> {
     future: Option<Change<&'l T>>,
     changed_new: &'l [T],
-    cache: C,
+    cache: HashCache<'l, T>,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq)]
@@ -260,15 +250,12 @@ impl<'l, T> Diffable<'l, T> for &'l [T]
 where
     T: PartialEq + Hash,
 {
-    fn hash_diff(self, new: Self) -> Diff<'l, T, DefaultHashCache<'l, T>> {
+    fn hash_diff(self, new: Self) -> Diff<'l, T> {
         // Properly implement so that a cache can not be extracted
-        self.hash_diff_cached(DefaultHashCache::from(self), new)
+        self.hash_diff_cached(HashCache::from(self), new)
     }
 
-    fn hash_diff_cached<C>(self, cache: C, new: Self) -> Diff<'l, T, C>
-    where
-        C: HashCache<'l, T>,
-    {
+    fn hash_diff_cached(self, cache: HashCache<'l, T>, new: Self) -> Diff<'l, T> {
         let old = self;
 
         let longer = max(old.len(), new.len());
@@ -308,10 +295,9 @@ where
     }
 }
 
-impl<'l, T, C> Iterator for Diff<'l, T, C>
+impl<'l, T> Iterator for Diff<'l, T>
 where
-    C: HashCache<'l, T>,
-    T: Hash,
+    T: Hash + PartialEq,
 {
     type Item = Change<&'l [T]>;
     fn next(&mut self) -> Option<Change<&'l [T]>> {
