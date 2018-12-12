@@ -46,6 +46,7 @@ where
 
     fn segment_change(&mut self, new_index: usize, new_tail: &'l [T]) -> Option<Change<&'l [T]>> {
         // caller must ensure new_tail holds at least one
+        let mut ret = None;
         let new_segment = &new_tail[0];
         let hash = HashCache::hash32(new_segment);
         let Self { flag, cache } = self;
@@ -73,7 +74,8 @@ where
 
                 if no_change {
                     // return true
-                    unimplemented!()
+                    // ret = None
+                    return
                 }
             }
 
@@ -151,7 +153,8 @@ where
                                             *deletion_len -= 1;
                                             Some((*deletion_len, true))
                                         }
-                                    })
+                                    },
+                                )
                             })
                             .take_while(|(deletion_len, _)| {
                                 deletion_amt = *deletion_len;
@@ -159,16 +162,22 @@ where
                             })
                             .all(|(_, b)| b);
 
-                            if is_deletion {
-                                deletion_amt += new_index;
+                    if is_deletion {
+                        deletion_amt += new_index;
 
-                                // return deleted
-                                unimplemented!()
-                            }
+                        // return deleted
+                        ret = Some(Change::Removed(&new_tail[0..deletion_amt]));
+                        return
+                    } else {
+                        // return addition
+                        ret = Some(Change::Added(&new_tail[0..1]));
+                        // FIXME handle pending deletion this gives rise to
+                        return
+                    }
                 }
             }
         });
-        unimplemented!()
+        ret
     }
 }
 
