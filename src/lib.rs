@@ -103,11 +103,12 @@ where
                     // due to deleted old entries being removed from map
                     // FIXME remove deleted entries
                     let deletion_len = *index - new_index;
-                    let deletion_expect_index = index;
+                    let deletion_expect_index = *index;
 
                     // For Change to be a deletion:
                     // tail[N <- 0..deletion_len].index == old[index+N].index
 
+                    let mut deletion_amt = 0;
                     let is_deletion =
                         new_tail
                             .iter()
@@ -135,7 +136,7 @@ where
 
                                                     *addition = true;
                                                     Some((*addition, *deletion))
-                                                } else if *index == *deletion_expect_index + n
+                                                } else if *index == deletion_expect_index + n
                                                     && eq_seg
                                                 {
                                                     *deletion = true;
@@ -160,8 +161,18 @@ where
                                         }
                                     })
                             })
-                            .take_while(|(deletion_len, _)| *deletion_len != 0)
+                            .take_while(|(deletion_len, _)| {
+                                deletion_amt = *deletion_len;
+                                *deletion_len != 0
+                            })
                             .all(|(_, b)| b);
+
+                            if is_deletion {
+                                deletion_amt += new_index;
+
+                                // return deleted
+                                unimplemented!()
+                            }
                 }
             }
         });
