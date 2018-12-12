@@ -22,13 +22,8 @@ pub struct IndexMap<'l, T> {
     segment: &'l T,
 }
 
-type Flag = bool;
-
 #[derive(Clone, Debug, PartialEq)]
 pub struct HashCache<'l, T> {
-    /// `(flag,  IndexMap<'l, T>) => Cached(IndexMap<'l, T>)` used to view `cache`
-    flag: Flag,
-    /// Map from hash to `IndexState` where `Flag` is interpreted with `flag`
     cache: IntMap<u32, SmallVec<[IndexMap<'l, T>; 2]>>,
 }
 
@@ -49,7 +44,7 @@ where
         let mut ret = None;
         let new_segment = &new_tail[0];
         let hash = HashCache::hash32(new_segment);
-        let Self { flag, cache } = self;
+        let Self { cache } = self;
         let unsafe_cache =
             unsafe { &*{ cache as *const IntMap<u32, SmallVec<[IndexMap<'l, T>; 2]>> } };
 
@@ -200,7 +195,7 @@ where
             })
             .collect();
 
-        HashCache { flag, cache }
+        HashCache { cache }
     }
 }
 
