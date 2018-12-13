@@ -15,10 +15,12 @@ use fasthash::murmur3::Murmur3Hasher_x86_32;
 extern crate smallvec;
 use smallvec::{smallvec, SmallVec};
 
+type DiffIndex = usize;
+
 // TODO implement `PartialOrd` interns of index
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct IndexMap<'l, T> {
-    index: usize,
+    index: DiffIndex,
     segment: &'l T,
 }
 
@@ -39,7 +41,13 @@ where
         hasher.finish() as u32
     }
 
-    fn segment_change(&mut self, new_index: usize, new_tail: &'l [T]) -> Option<Change<&'l [T]>> {
+    fn segment_change(
+        &mut self,
+        new_index: DiffIndex,
+        new_tail: &'l [T],
+        // TODO implement macro over sizes
+        pred_changes: SmallVec<[predicate::Change; 10]>,
+    ) -> Option<Change<&'l [T]>> {
         // caller must ensure new_tail holds at least one
         let mut ret = None;
         let new_segment = &new_tail[0];
@@ -70,7 +78,7 @@ where
                 if no_change {
                     // return true
                     // ret = None
-                    return
+                    return;
                 }
             }
 
@@ -162,12 +170,12 @@ where
 
                         // return deleted
                         ret = Some(Change::Removed(&new_tail[0..deletion_amt]));
-                        return
+                        return;
                     } else {
                         // return addition
                         ret = Some(Change::Added(&new_tail[0..1]));
                         // FIXME handle pending deletion this gives rise to
-                        return
+                        return;
                     }
                 }
             }
@@ -250,6 +258,47 @@ impl<S> From<(ChangeVariant, S)> for Change<S> {
     }
 }
 
+mod predicate {
+    use smallvec::{Array, SmallVec};
+    use std::ops::Range;
+
+    // TODO Bounded version
+    pub struct Tree<A>
+    where
+        A: smallvec::Array,
+    {
+        pub arr: SmallVec<A>,
+    }
+
+    pub struct Index {
+        index: isize,
+    }
+
+    impl From<Index> for Option<usize> {
+        fn from(index: Index) -> Option<usize> {
+            if index.index == -1 {
+                None
+            } else {
+                Some(index.index as usize)
+            }
+        }
+    }
+
+    pub enum Change {
+        AddDel {
+            apon: Index,
+            del_apon_eq: Range<usize>,
+            del_eq_amt: usize,
+        },
+
+        DelAfterAdd {
+            apon: Index,
+            occurrence_count: usize,
+            next_occurrence: usize,
+        },
+    }
+}
+
 impl<'l, T> Diffable<'l, T> for &'l [T]
 where
     T: PartialEq + Hash,
@@ -317,8 +366,9 @@ where
                     None,
                     // FIXME this is a for loop
                     |next_change: &mut Option<Change<&'l [T]>>, (index, _)| {
-                        let keep_going = cache.segment_change(index, &changed_new[index..]).map(
-                            |future_change| {
+                        let keep_going = cache
+                            .segment_change(index, &changed_new[index..], SmallVec::new())
+                            .map(|future_change| {
                                 let future_variant = ChangeVariant::from(future_change);
                                 let next_variant = next_change
                                     .map(|nc| ChangeVariant::from(nc))
@@ -332,8 +382,7 @@ where
                                 } else {
                                     (next_change.clone(), Some(future_change.clone()))
                                 }
-                            },
-                        );
+                            });
 
                         if keep_going.is_none() && next_change.is_none() {
                             Some((None, None))
