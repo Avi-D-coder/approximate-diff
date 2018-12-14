@@ -260,14 +260,14 @@ impl<S> From<(ChangeVariant, S)> for Change<S> {
 
 mod predicate {
     use smallvec::{Array, SmallVec};
-    use std::ops::Range;
+    use std::ops::{Index, Range};
 
     // TODO Bounded version
     pub struct Tree<A>
     where
         A: smallvec::Array,
     {
-        pub vec: SmallVec<A>,
+        vec: SmallVec<A>,
     }
 
     impl<A> Tree<A>
@@ -314,13 +314,35 @@ mod predicate {
         }
     }
 
+    impl<U, A> Index<usize> for Tree<A>
+    where
+        A: Array<Item = U>,
+    {
+        type Output = U;
+
+        fn index(&self, index: usize) -> &Self::Output {
+            &self.vec[index]
+        }
+    }
+
+    impl<U, A> Index<Range<usize>> for Tree<A>
+    where
+        A: Array<Item = U>,
+    {
+        type Output = [U];
+
+        fn index(&self, index: Range<usize>) -> &Self::Output {
+            &self.vec[index]
+        }
+    }
+
     #[derive(Copy, Clone, Debug)]
-    pub struct Index {
+    pub struct MaybeIndex {
         index: isize,
     }
 
-    impl From<Index> for Option<usize> {
-        fn from(index: Index) -> Option<usize> {
+    impl From<MaybeIndex> for Option<usize> {
+        fn from(index: MaybeIndex) -> Option<usize> {
             if index.index == -1 {
                 None
             } else {
@@ -331,7 +353,7 @@ mod predicate {
 
     #[derive(Clone, Debug)]
     pub struct Change {
-        apon: Index,
+        apon: MaybeIndex,
         variant: Variant,
     }
 
