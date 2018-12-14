@@ -267,9 +267,54 @@ mod predicate {
     where
         A: smallvec::Array,
     {
-        pub arr: SmallVec<A>,
+        pub vec: SmallVec<A>,
     }
 
+    impl<A> Tree<A>
+    where
+        A: Array<Item = Change>,
+    {
+        fn new(arr: A) -> Tree<A> {
+            Tree {
+                // TODO IntMap alternative
+                vec: SmallVec::from_buf(arr),
+            }
+        }
+
+        /// panics on invalid index passed to `at`
+        fn remove(mut self, at: usize) {
+            if at == self.vec.len() - 1 {
+                return;
+            }
+
+            let len = self.vec.len();
+            let mut i = at;
+            let mut next = at + 1;
+
+            let mut removed: SmallVec<[usize; 128]> = SmallVec::from_elem(at, 1);
+            while i < len {
+                if next < len {
+                    let next_apon: Option<usize> = self.vec[next].apon.into();
+                    let remove_next: bool =
+                        next_apon.map_or(false, |index| removed.contains(&index));
+
+                    if remove_next {
+                        removed.push(next);
+                        next += 1;
+                    } else {
+                        self.vec[i] = self.vec[next].clone();
+                        i += 1;
+                        next += 1;
+                    }
+                } else {
+                    self.vec.truncate(i + 1);
+                    break;
+                }
+            }
+        }
+    }
+
+    #[derive(Copy, Clone, Debug)]
     pub struct Index {
         index: isize,
     }
@@ -284,15 +329,20 @@ mod predicate {
         }
     }
 
-    pub enum Change {
+    #[derive(Clone, Debug)]
+    pub struct Change {
+        apon: Index,
+        variant: Variant,
+    }
+
+    #[derive(Clone, Debug)]
+    pub enum Variant {
         AddDel {
-            apon: Index,
             del_apon_eq: Range<usize>,
             del_eq_amt: usize,
         },
 
         DelAfterAdd {
-            apon: Index,
             occurrence_count: usize,
             next_occurrence: usize,
         },
